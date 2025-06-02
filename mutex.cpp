@@ -1,87 +1,288 @@
 /*
-std::mutex – базовый мьютекс(нерекурсивный).
+? std::mutex - базовый мьютекс
 
-void function() {
-  mtx.lock(); // Блокировка
-  // Критическая секция
-  mtx.unlock(); // Разблокировка
-}
-
-Опасность: Если между lock() и unlock() выбросится исключение – мьютекс останется заблокированным (deadlock).
-*/
-
-/*
-std::lock_guard – автоматическое управление блокировкой (RAII).
-
-{
-    std::lock_guard<std::mutex> lock(mtx); // Блокировка при создании
-    // Критическая секция
-} // Автоматическая разблокировка при разрушении lock_guard
-
-Безопасно: Разблокировка даже при исключении.
-*/
-
-/*
-std::unique_lock – более гибкая версия lock_guard.
-std::defer_lock //Не блокировать мьютекс сразу при создании unique_lock.
-                //Блокировку нужно выполнить вручную позже (lock(), try_lock()).
-
-std::try_to_lock    //Попытаться захватить мьютекс без блокировки потока (не ждать, если он занят).
-                    //Проверить успешность через owns_lock().
-
-std::adopt_lock //Принять уже заблокированный мьютекс (предполагается, что он был заблокирован ранее, например, через mtx.lock() или std::lock).
-                //unique_lock не будет пытаться заблокировать его снова, но разблокирует при разрушении.
-
-Использовать с std::condition_variable.
+#include <iostream>
+#include <mutex>
+#include <thread>
 
 std::mutex mtx;
-std::unique_lock<std::mutex> ulock(mtx, std::defer_lock); // Не блокирует сразу
-ulock.lock(); // Блокировка вручную
-// ...
-ulock.unlock(); // Можно разблокировать раньше
 
-Гибкость: Подходит для сложных сценариев.
+void print_block(int n, char c) {
+    mtx.lock();  // Блокируем мьютекс
+    for (int i = 0; i < n; ++i) { std::cout << c; }
+    std::cout << '\n';
+    mtx.unlock();  // Разблокируем мьютекс
+}
+
+int main() {
+    std::thread th1(print_block, 50, '*');
+    std::thread th2(print_block, 50, '$');
+
+    th1.join();
+    th2.join();
+
+    return 0;
+}
 */
 
 /*
-std::recursive_mutex – рекурсивный мьютекс (один поток может блокировать его несколько раз).
+? std::lock_guard - RAII-обертка для мьютекса
+
+#include <iostream>
+#include <thread>
+#include <mutex>
+
+std::mutex mtx;
+
+void print_block(int n, char c) {
+    std::lock_guard<std::mutex> guard(mtx);  // Автоматически блокируется при создании и разблокируется при выходе из области видимости
+    for (int i = 0; i < n; ++i) { std::cout << c; }
+    std::cout << '\n';
+}
+
+int main() {
+    std::thread th1(print_block, 50, '*');
+    std::thread th2(print_block, 50, '$');
+    
+    th1.join();
+    th2.join();
+    
+    return 0;
+}
+*/
+
+/*
+? std::unique_lock - более гибкая RAII-обертка
+
+#include <iostream>
+#include <thread>
+#include <mutex>
+
+std::mutex mtx;
+
+void print_block(int n, char c) {
+    std::unique_lock<std::mutex> lck(mtx);  // Блокировка при создании
+    for (int i = 0; i < n; ++i) { std::cout << c; }
+    std::cout << '\n';
+    Разблокировка автоматически при разрушении lck
+}
+
+int main() {
+    std::thread th1(print_block, 50, '*');
+    std::thread th2(print_block, 50, '$');
+    
+    th1.join();
+    th2.join();
+    
+    return 0;
+}
+*/
+
+/*
+? std::try_lock - попытка блокировки нескольких мьютексов
+
+#include <iostream>
+#include <thread>
+#include <mutex>
+
+std::mutex mtx1, mtx2;
+
+void task() {
+    while (true) {
+        if (std::try_lock(mtx1, mtx2) == -1) {  // Пытаемся заблокировать оба мьютекса
+            std::cout << "Thread " << std::this_thread::get_id() << " acquired locks\n";
+            // Работа с защищенными данными
+            mtx1.unlock();
+            mtx2.unlock();
+            break;
+        } else {
+            std::this_thread::yield();  // Если не получилось, уступаем процессорное время
+        }
+    }
+}
+
+int main() {
+    std::thread th1(task);
+    std::thread th2(task);
+    
+    th1.join();
+    th2.join();
+    
+    return 0;
+}
+*/
+
+/*
+? std::lock - блокировка нескольких мьютексов без deadlock
+
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex mtx1, mtx2;
+
+void task() {
+    std::lock(mtx1, mtx2);  // Блокируем оба мьютекса атомарно
+    std::lock_guard<std::mutex> lck1(mtx1, std::adopt_lock);
+    std::lock_guard<std::mutex> lck2(mtx2, std::adopt_lock);
+
+    std::cout << "Thread " << std::this_thread::get_id() << " acquired locks\n";
+}
+
+int main() {
+    std::thread th1(task);
+    std::thread th2(task);
+
+    th1.join();
+    th2.join();
+
+    return 0;
+}
+*/
+
+/*
+? std::recursive_mutex - рекурсивный мьютекс
+
+#include <iostream>
+#include <mutex>
+#include <thread>
 
 std::recursive_mutex rmtx;
 
-void foo() {
+void recursive_function(int count) {
     std::lock_guard<std::recursive_mutex> lock(rmtx);
-    bar(); // Может снова заблокировать тот же мьютекс
+    std::cout << "Count: " << count << std::endl;
+    if (count > 0) {
+        recursive_function(count - 1);  // Рекурсивный вызов с тем же мьютексом
+    }
 }
 
-void bar() {
-    std::lock_guard<std::recursive_mutex> lock(rmtx);
+int main() {
+    std::thread th(recursive_function, 3);
+    th.join();
+    return 0;
 }
 */
 
 /*
-std::timed_mutex и std::recursive_timed_mutex – мьютексы с таймаутом.
+? std::timed_mutex - мьютекс с таймаутом
+
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <chrono>
 
 std::timed_mutex tmtx;
 
-if (tmtx.try_lock_for(std::chrono::milliseconds(100))) {
-    // Успешная блокировка
-    tmtx.unlock();
-} else {
-    // Не удалось заблокировать за 100 мс
+void task() {
+    auto now = std::chrono::steady_clock::now();
+    if (tmtx.try_lock_until(now + std::chrono::seconds(1))) {  // Пытаемся заблокировать в течение 1 секунды
+        std::cout << "Thread " << std::this_thread::get_id() << " got the lock\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        tmtx.unlock();
+    } else {
+        std::cout << "Thread " << std::this_thread::get_id() << " couldn't get the lock\n";
+    }
+}
+
+int main() {
+    std::thread th1(task);
+    std::thread th2(task);
+    
+    th1.join();
+    th2.join();
+    
+    return 0;
 }
 */
 
 /*
-std::lock(mutex1, mutex2, ...) – безопасно блокирует несколько мьютексов без deadlock.
-std::try_lock(mutex1, mutex2, ...) – пытается заблокировать несколько мьютексов.
+? std::recursive_timed_mutex - рекурсивный мьютекс с таймаутом
 
-std::mutex mtx1, mtx2;
-{
-    std::lock(mtx1, mtx2); // Блокировка обоих атомарно
-    std::lock_guard<std::mutex> lock1(mtx1, std::adopt_lock); // Принимает владение
-    std::lock_guard<std::mutex> lock2(mtx2, std::adopt_lock);
-    // ...
-} // Автоматическая разблокировка
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <chrono>
+
+std::recursive_timed_mutex rtmtx;
+
+void task() {
+    for (int i = 0; i < 3; ++i) {
+        if (rtmtx.try_lock_for(std::chrono::milliseconds(100))) {  // Пытаемся заблокировать в течение 100 мс
+            std::cout << "Thread " << std::this_thread::get_id() << " got the lock (iteration " << i << ")\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            rtmtx.unlock();
+        } else {
+            std::cout << "Thread " << std::this_thread::get_id() << " couldn't get the lock (iteration " << i << ")\n";
+        }
+    }
+}
+
+int main() {
+    std::thread th1(task);
+    std::thread th2(task);
+    
+    th1.join();
+    th2.join();
+    
+    return 0;
+}
+*/
+
+/*
+? std::unique_lock с отложенной блокировкой
+
+#include <iostream>
+#include <thread>
+#include <mutex>
+
+std::mutex mtx;
+
+void worker(int id) {
+    std::unique_lock<std::mutex> lock(mtx, std::defer_lock); // Не блокируем сразу
+    std::cout << "Thread " << id << " is doing some work without lock\n";
+    
+    / Блокируем позже, когда нужно
+    lock.lock();
+    std::cout << "Thread " << id << " has locked the mutex\n";
+    / Критическая секция
+    lock.unlock(); // Можно разблокировать вручную
+}
+
+int main() {
+    std::thread t1(worker, 1);
+    std::thread t2(worker, 2);
+    
+    t1.join();
+    t2.join();
+    
+    return 0;
+}
+*/
+
+/*
+? Передача владения std::unique_lock
+
+#include <iostream>
+#include <thread>
+#include <mutex>
+
+std::mutex mtx;
+
+void worker(std::unique_lock<std::mutex> lock) {
+    std::cout << "Thread has the lock\n";
+    / Критическая секция
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::cout << "Thread releasing the lock\n";
+}
+
+int main() {
+    std::unique_lock<std::mutex> lock(mtx);
+    std::thread t(worker, std::move(lock)); // Передаем владение мьютексом
+    
+    t.join();
+    return 0;
+}
 */
 
 #include<iostream>
